@@ -32,7 +32,6 @@ swapSide = (side) ->
   if side is "Corp" then "Runner" else "Corp"
 
 removePlayer = (socket, reason) ->
-  found = false
   for game, i in games
     for player, j in game.players
       if not player.user or player.id is socket.id
@@ -44,9 +43,7 @@ removePlayer = (socket, reason) ->
           socket.to(game.gameid).emit('netrunner', {type: "say", user: "__system__", text: "#{player.user.username} left the game."})
         if game.players.length is 0
           games.splice(i, 1)
-        found = true
         break
-    break if found
   lobby.emit('netrunner', {type: "games", games: games})
 
 # Socket.io
