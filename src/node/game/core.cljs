@@ -58,8 +58,7 @@
            #(remove (fn [effect] (= (get-in effect [:card :cid]) (:cid card))) %))))
 
 (defn desactivate [state side card]
-  (let [c (dissoc card :counter :advance-counter :current-strength :abilities :rezzed :special)
-        cdef (card-def card)]
+  (let [c (dissoc card :counter :advance-counter :current-strength :abilities :rezzed :special)]
     (when-let [leave-effect (:leave-play (card-def card))]
       (when (or (= (:side card) "Runner") (:rezzed card))
         (leave-effect state side card nil)))
@@ -196,7 +195,8 @@
     (system-msg state :corp (str "uses " (:title card) " to initiate a trace with strength "
                                  s " (" base " + " boost " [Credits])"))
     (show-prompt state :runner card (str "Boost link strength?") :credit #(resolve-trace state side %))
-    (swap! state assoc :trace {:strength s :ability ability :card card})))
+    (swap! state assoc :trace {:strength s :ability ability :card card})
+    (trigger-event state side :trace nil)))
 
 (defn resolve-select [state side]
   (let [selected (get-in @state [side :selected])]
@@ -750,6 +750,11 @@
   (system-msg state side (str "forfeit " (:title card)))
   (gain state side :agenda-point (- (:agendapoints card)))
   (move state :corp card :rfg false (= side :runner)))
+
+(defn expose [state side target]
+  (system-msg state side (str "exposes " (:title target)))
+  (when-let [ability (:expose (card-def target))]
+    (resolve-ability state side ability target nil)))
 
 (defn prevent-run [state side]
   (swap! state assoc-in [:runner :register :cannot-run] true))
