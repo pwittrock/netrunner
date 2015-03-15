@@ -42,6 +42,9 @@
       (update-in params [:args :card :zone] #(map (fn [k] (if (string? k) (keyword k) k)) %))
       params)))
 
+(defn removegame [gameid]
+  (swap! game-states dissoc gameid))
+
 (defn exec [action args]
   (let [params (convert args)
         gameid (:gameid params)
@@ -50,7 +53,7 @@
            "init" (core/init-game params)
            "do" ((commands (:command params)) state (keyword (:side params)) (:args params))
            "quit" (system-msg state (keyword (:side params)) "left the game")
-           "disconnect" (swap! state update-in [:log] #(conj % {:user "__system__" :text (:text params)})))
+           "notification" (swap! state update-in [:log] #(conj % {:user "__system__" :text (:text params)})))
          (catch :default e
            (prn e)))
     (clj->js @(@game-states gameid))))
