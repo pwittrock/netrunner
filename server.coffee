@@ -11,7 +11,7 @@ bcrypt = require('bcrypt')
 passport = require('passport')
 localStrategy = require('passport-local').Strategy
 jwt = require('jsonwebtoken')
-gameEngine = require('./game')
+zmq = require('zmq')
 
 # MongoDB connection
 mongoUser = process.env.OPENSHIFT_MONGODB_DB_USERNAME
@@ -26,27 +26,44 @@ db = mongoskin.db(mongoUrl)
 
 # Game lobby
 gameid = 0
-games = []
+games = {}
 
 swapSide = (side) ->
   if side is "Corp" then "Runner" else "Corp"
 
-removePlayer = (socket, reason) ->
-  for game, i in games
-    for player, j in game.players
-      if not player.user or player.id is socket.id
-        game.players.splice(j, 1)
-        if reason is "disconnect" and game.started
-          state = gameEngine.main.exec("disconnect", {gameid: game.gameid, text: "#{player.user.username} disconnected."})
-          lobby.to(game.gameid).emit("netrunner", {type: "state", state: state})
-        if reason is "leave"
-          socket.to(game.gameid).emit('netrunner', {type: "say", user: "__system__", text: "#{player.user.username} left the game."})
-        if game.players.length is 0
-          games.splice(i, 1)
+removePlayer = (socket) ->
+  game = games[socket.gameid]
+  if game
+    for player, i in game.players
+      if player.id is socket.id
+        game.players.splice(i, 1)
         break
-  lobby.emit('netrunner', {type: "games", games: games})
+    if game.players.length is 0
+      requester.send(JSON.stringify({action: "remove", gameid: socket.gameid}))
+      delete games[socket.gameid]
+    socket.leave(socket.gameid)
+    socket.gameid = false
+    lobby.emit('netrunner', {type: "games", games: games})
+
+joinGame = (socket, gameid) ->
+  game = games[gameid]
+  if game and game.players.length is 1 and game.players[0].user.username isnt socket.request.user.username
+    game.players.push({user: socket.request.user, id: socket.id, side: swapSide(game.players[0].side)})
+    socket.join(gameid)
+    socket.gameid = gameid
+    socket.emit("netrunner", {type: "game", gameid: gameid})
+    lobby.emit('netrunner', {type: "games", games: games})
+
+# ZeroMQ
+requester = zmq.socket('req')
+requester.connect('tcp://127.0.0.1:1043')
+requester.on 'message', (data) ->
+  response = JSON.parse(data)
+  unless response is "ok"
+    lobby.to(response.gameid).emit("netrunner", {type: response.action, state: response})
 
 # Socket.io
+io.set("heartbeat timeout", 30000)
 io.use (socket, next) ->
   if socket.handshake.query.token
     jwt.verify socket.handshake.query.token, config.salt, (err, user) ->
@@ -63,78 +80,74 @@ lobby = io.of('/lobby').on 'connection', (socket) ->
   lobby.emit('netrunner', {type: "games", games: games})
 
   socket.on 'disconnect', () ->
-    removePlayer(socket,  "disconnect") if socket.request.user
+    if socket.gameid
+      if games[socket.gameid].started
+        requester.send(JSON.stringify({action: "notification", gameid: socket.gameid, text: "#{socket.request.user.username} disconnected."}))
+      removePlayer(socket)
 
   socket.on 'netrunner', (msg) ->
     switch msg.action
       when "create"
         game = {date: new Date(), gameid: ++gameid, title: msg.title,\
                 players: [{user: socket.request.user, id: socket.id, side: "Corp"}]}
-        games.push(game)
+        games[gameid] = game
         socket.join(gameid)
+        socket.gameid = gameid
         socket.emit("netrunner", {type: "game", gameid: gameid})
         lobby.emit('netrunner', {type: "games", games: games, notification: "ting"})
 
-      when "leave"
-        removePlayer(socket, "leave")
-        socket.leave(msg.gameid)
+      when "leave-lobby"
+        socket.to(socket.gameid).emit('netrunner', {type: "say", user: "__system__", text: "#{socket.request.user.username} left the game."})
+        removePlayer(socket)
 
-      when "quit"
-        removePlayer(socket, "quit")
-        socket.leave(msg.gameid)
-        lobby.emit('netrunner', {type: "games", games: games})
-        state = gameEngine.main.exec("quit", msg)
-        lobby.to(msg.gameid).emit("netrunner", {type: "state", state: state})
+      when "leave-game"
+        msg.action = "quit"
+        requester.send(JSON.stringify(msg)) if games[socket.gameid].players.length > 1
+        removePlayer(socket)
 
       when "join"
-        for game in games
-          if game.gameid is msg.gameid and game.players.length < 2 and game.players[0].user.username isnt socket.request.user.username
-            game.players.push({user: socket.request.user, id: socket.id, side: swapSide(game.players[0].side)})
-            socket.join(game.gameid)
-            socket.emit("netrunner", {type: "game", gameid: game.gameid})
-            break
-        lobby.emit('netrunner', {type: "games", games: games})
+        joinGame(socket, msg.gameid)
         socket.broadcast.to(msg.gameid).emit 'netrunner',
           type: "say"
           user: "__system__"
           notification: "ting"
           text: "#{socket.request.user.username} joined the game."
 
+      when "reconnect"
+        game = games[msg.gameid]
+        if game and game.started
+          joinGame(socket, msg.gameid)
+          requester.send(JSON.stringify({action: "notification", gameid: socket.gameid, text: "#{socket.request.user.username} reconnected."}))
+
       when "say"
         lobby.to(msg.gameid).emit("netrunner", {type: "say", user: socket.request.user, text: msg.text})
 
       when "swap"
-        for game in games
-          if game.gameid is msg.gameid
-            for player in game.players
-              player.side = swapSide(player.side)
-              player.deck = null
-            break
+        for player in games[socket.gameid].players
+          player.side = swapSide(player.side)
+          player.deck = null
         lobby.to(msg.gameid).emit('netrunner', {type: "games", games: games})
 
       when "deck"
-        for game in games
-          if game.gameid is msg.gameid
-            for player in game.players
-              if player.user.username is socket.request.user.username
-                player.deck = msg.deck
-                break
+        for player in games[socket.gameid].players
+          if player.user.username is socket.request.user.username
+            player.deck = msg.deck
             break
         lobby.to(msg.gameid).emit('netrunner', {type: "games", games: games})
 
       when "start"
-        for game, i in games
-          if game.gameid is msg.gameid
-            state = gameEngine.main.exec("init", game)
-            game.started = true
-            lobby.to(msg.gameid).emit("netrunner", {type: "start", state: state})
-            break
-        lobby.emit('netrunner', {type: "games", games: games})
+        game = games[socket.gameid]
+        if game
+          game.started = true
+          msg = games[socket.gameid]
+          msg.action = "start"
+          msg.gameid = socket.gameid
+          requester.send(JSON.stringify(msg))
+          lobby.emit('netrunner', {type: "games", games: games})
 
       when "do"
         try
-          state = gameEngine.main.exec("do", msg)
-          lobby.to(msg.gameid).emit("netrunner", {type: "state", state: state})
+          requester.send(JSON.stringify(msg))
         catch err
           console.log(err)
 

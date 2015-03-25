@@ -27,12 +27,12 @@
     (keyword (.toLowerCase string))))
 
 (defn capitalize [string]
-  (str (.toUpperCase (first string)) (subs string 1)))
+  (str (Character/toUpperCase (first string)) (subs string 1)))
 
 (defn costs-to-symbol [costs]
   (reduce #(let [key (first %2) value (last %2)]
              (case key
-               :credit (str %1 value "[Credits]")
+               :credit (str %1 value " [Credits]")
                :click (reduce str %1 (for [i (range value)] "[Click]"))
                (str %1 value " " (str key)))) "" (partition 2 (flatten costs))))
 
