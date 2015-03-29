@@ -56,7 +56,7 @@
 
 (defn -main []
   (let [socket (.socket ctx ZMQ/REP)]
-    (.bind socket "tcp://127.0.0.1:1043")
+    (.bind socket "tcp://*:1043")
     (println "Listening on port 1043 for incoming commands...")
     (while true
       (let [data (convert (.recv socket))]

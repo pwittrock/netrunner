@@ -20,6 +20,7 @@ login = if process.env.OPENSHIFT_MONGODB_DB_PASSWORD then "#{mongoUser}:#{mongoP
 mongoHost = process.env.OPENSHIFT_MONGODB_DB_HOST || '127.0.0.1'
 mongoPort = process.env.OPENSHIFT_MONGODB_DB_PORT || '27017'
 appName = process.env.OPENSHIFT_APP_NAME || 'netrunner'
+clServer = process.env.CL_SERVER || 'tcp://127.0.0.1:1043'
 
 mongoUrl = "mongodb://#{login}#{mongoHost}:#{mongoPort}/#{appName}"
 db = mongoskin.db(mongoUrl)
@@ -56,7 +57,7 @@ joinGame = (socket, gameid) ->
 
 # ZeroMQ
 requester = zmq.socket('req')
-requester.connect('tcp://127.0.0.1:1043')
+requester.connect(clServer)
 requester.on 'message', (data) ->
   response = JSON.parse(data)
   unless response is "ok"
