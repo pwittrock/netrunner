@@ -2,7 +2,6 @@
   (:require [game.utils :refer [remove-once has? merge-costs zone make-cid to-keyword capitalize
                                 costs-to-symbol vdissoc distinct-by]]
             [game.macros :refer [effect req msg]]
-            [clojure.string :refer [join]]
             [clojure.string :refer [split-lines split join]]))
 
 (declare cards)
@@ -38,18 +37,18 @@
              (when (= (first c) :click)
                (trigger-event state side (if (= side :corp) :corp-spent-click :runner-spent-click) nil)
                (swap! state assoc-in [side :register :spent-click] true))
-             (swap! state update-in [side (first c)] #(- % (last c))))))))
+             (swap! state update-in [side (first c)] #(- (or % 0) (last c))))))))
 
 (defn gain [state side & args]
   (doseq [r (partition 2 args)]
-    (swap! state update-in [side (first r)] #(+ % (last r)))))
+    (swap! state update-in [side (first r)] #(+ (or % 0) (last r)))))
 
 (defn lose [state side & args]
   (doseq [r (partition 2 args)]
     (trigger-event state side (if (= side :corp) :corp-loss :runner-loss) r)
     (if (= (last r) :all)
       (swap! state assoc-in [side (first r)] 0)
-      (swap! state update-in [side (first r)] #(max (- % (last r)) 0)))))
+      (swap! state update-in [side (first r)] #(max (- (or % 0) (last r)) 0)))))
 
 (defn register-events [state side events card]
   (doseq [e events]
@@ -169,7 +168,7 @@
   (doseq [s [:corp :runner]]
     (show-prompt state s card (str "Choose an amount to spend for " (:title card))
                  (map #(str % " [Credits]") (range (min 3 (inc (get-in @state [s :credit])))))
-                 #(resolve-psi state s card psi (Integer/parseInt %)))))
+                 #(resolve-psi state s card psi (Integer/parseInt (first (split % #" ")))))))
 
 (defn prompt! [state side card msg choices ability]
   (show-prompt state side card msg choices #(resolve-ability state side ability card [%])))
@@ -202,21 +201,23 @@
     (trigger-event state side :trace nil)))
 
 (defn resolve-select [state side]
-  (let [selected (get-in @state [side :selected])]
-    (when-not (empty? (:cards selected))
-      (resolve-ability state side (:ability selected) (-> (get-in @state [side :prompt]) first :card)
-                       (:cards selected))))
+  (let [selected (get-in @state [side :selected])
+        cards (map #(dissoc % :selected) (:cards selected))]
+    (when-not (empty? cards)
+      (doseq [card cards] (update! state side card))
+      (resolve-ability state side (:ability selected) (-> (get-in @state [side :prompt]) first :card) cards)))
   (swap! state assoc-in [side :selected] nil)
   (swap! state update-in [side :prompt] rest))
 
 (defn show-select [state side card ability]
   (swap! state assoc-in [side :selected]
-         {:ability (dissoc ability :choices) :req (get-in ability [:choices :req])})
+         {:ability (dissoc ability :choices) :req (get-in ability [:choices :req])
+          :max (get-in ability [:choices :max])})
   (show-prompt state side card
-               (if-let [m (get-in [:choices :max] ability)]
+               (if-let [m (get-in ability [:choices :max])]
                  (str "Select up to " m " targets for " (:title card))
                  (str "Select a target for " (:title card)))
-               ["Done"] #(resolve-select state side)))
+               ["Done"] (fn [choice] (resolve-select state side))))
 
 (defn resolve-ability [state side {:keys [counter-cost advance-counter-cost cost effect msg req once
                                           once-key optional prompt choices end-turn player psi trace
@@ -360,12 +361,6 @@
       (trash state side c type))
     (trigger-event state side :damage type)))
 
-(defn do! [{:keys [cost effect]}]
-  (fn [state side args]
-    (if (apply pay (concat [state side nil] cost))
-      (effect state side args)
-      false)))
-
 (defn shuffle! [state side kw]
   (swap! state update-in [side kw] shuffle))
 
@@ -425,8 +420,10 @@
 (defn mulligan [state side args]
   (shuffle-into-deck state side :hand)
   (draw state side 5)
-  (when-let [cdef (card-def (get-in @state [side :identity]))]
-    (when-let [mul (:mulligan cdef)] (mul state side nil)))
+  (let [card (get-in @state [side :identity])]
+    (when-let [cdef (card-def card)]
+      (when-let [mul (:mulligan cdef)]
+        (mul state side card nil))))
   (swap! state assoc-in [side :keep] true)
   (system-msg state side "takes a mulligan"))
 
@@ -446,8 +443,8 @@
     (when-let [trash-effect (:trash-effect cdef)]
       (resolve-ability state side trash-effect moved-card targets))))
 
-;; (defn trash-cards [state side cards]
-;;   (doseq [c cards] (trash state side c)))
+(defn trash-cards [state side cards]
+  (doseq [c cards] (trash state side c)))
 
 (defn pump
   ([state side card n] (pump state side card n false))
@@ -683,7 +680,7 @@
      (let [dest [:rig (to-keyword type)]
            cost (if no-cost 0 cost)]
        (when (and (or (not uniqueness) (not (in-play? state card)))
-                  (if-let [req (:req (card-def card))] (req state card) true)
+                  (if-let [req (:req (card-def card))] (req state side card nil) true)
                   (pay state side card :credit cost (when memoryunits [:memory memoryunits]) extra-cost))
          (let [c (move state side card dest)
                installed-card (card-init state side c)]
@@ -802,6 +799,15 @@
     (system-msg state side "spends [Click] to gain 1 [Credits]")
     (gain state side :credit 1)
     (trigger-event state side (if (= side :corp) :corp-click-credit :runner-click-credit))))
+
+(defn do-purge [state side args]
+  (when (pay state side nil :click 3)
+    (system-msg state side "purges viruses")
+    (purge state side)))
+
+(defn remove-tag [state side args]
+  (when (pay state side nil :click 1 :credit 2 :tag 1)
+    (system-msg state side "spend [Click] and 2 [Credits] to remove 1 tag")))
 
 (defn jack-out [state side args]
   (end-run state side)
