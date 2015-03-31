@@ -69,12 +69,12 @@
       (gain state :runner :memory mu))
     c))
 
-(defn move-cards [state side server to]
+(defn move-zone [state side server to]
   (let [from-zone (cons side (if (sequential? server) server [server]))
         to-zone (cons side (if (sequential? to) to [to]))]
     (swap! state assoc-in to-zone (concat (get-in @state to-zone)
                                           (zone to (get-in @state from-zone))))
-    (swap! state assoc-in from-zone)))
+    (swap! state assoc-in from-zone [])))
 
 (defn move
   ([state side {:keys [zone cid] :as card} to] (move state side card to nil))
@@ -766,7 +766,7 @@
 (defn forfeit [state side card]
   (system-msg state side (str "forfeit " (:title card)))
   (gain state side :agenda-point (- (:agendapoints card)))
-  (move state :corp card :rfg false (= side :runner)))
+  (move state :corp card :rfg))
 
 (defn expose [state side target]
   (system-msg state side (str "exposes " (:title target)))

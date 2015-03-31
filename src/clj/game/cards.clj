@@ -256,7 +256,7 @@
                                                   (lose state side :tag 1)))} card nil))}]}
 
    "Chronos Project"
-   {:effect (effect (move :runner :discard :rfg))}
+   {:effect (effect (move-zone :runner :discard :rfg))}
 
    "City Surveillance"
    {:events {:runner-turn-begins
@@ -443,8 +443,9 @@
 
    "Domestic Sleepers"
    {:abilities [{:cost [:click 3] :msg "place 1 agenda counter on Domestic Sleepers"
-                 :effect #(do (when (zero? (:counter %3)) (gain-agenda-point %1 %2 1))
-                              (set-prop %1 %2 %3 :counter 1 :agendapoints 1))}]}
+                 :effect (req (when (zero? (:counter card))
+                                (gain-agenda-point state side 1))
+                              (set-prop state side card :counter 1 :agendapoints 1))}]}
 
    "Doppelgänger"
    {:effect (effect (gain :memory 1)) :leave-play (effect (lose :memory 1))
@@ -523,7 +524,12 @@
     :choices {:req #(and (has? % :type "ICE") (:rezzed %))} :effect (effect (derez target))}
 
    "Encrypted Portals"
-   {:effect (effect (gain :credit
+   {:msg (msg "gain " (reduce (fn [c server]
+                                    (+ c (count (filter (fn [ice] (and (has? ice :subtype "Code Gate")
+                                                                      (:rezzed ice))) (:ices server)))))
+                              0 (flatten (seq (:servers corp))))
+              " [Credits]")
+    :effect (effect (gain :credit
                           (reduce (fn [c server]
                                     (+ c (count (filter (fn [ice] (and (has? ice :subtype "Code Gate")
                                                                       (:rezzed ice))) (:ices server)))))
@@ -1673,7 +1679,7 @@
    "Subliminal Messaging"
    {:effect (effect (gain :credit 1)
                     (resolve-ability {:once :per-turn :once-key :subliminal-messaging
-                                      :effect #(gain state :corp :click 1)} card nil))}
+                                      :effect (effect (gain :corp :click 1))} card nil))}
 
    "Successful Demonstration"
    {:req (req (:unsuccessful-run runner-reg)) :effect (effect (gain :credit 7))}
@@ -1683,7 +1689,12 @@
                                   :msg "gain 2 [Credits]" :effect (effect (gain :corp :credit 2))}}}
 
    "Superior Cyberwalls"
-   {:effect (effect (gain :credit
+   {:msg (msg "gain " (reduce (fn [c server]
+                                    (+ c (count (filter (fn [ice] (and (has? ice :subtype "Barrier")
+                                                                      (:rezzed ice))) (:ices server)))))
+                              0 (flatten (seq (:servers corp))))
+              " [Credits]")
+    :effect (effect (gain :credit
                           (reduce (fn [c server]
                                     (+ c (count (filter (fn [ice] (and (has? ice :subtype "Barrier")
                                                                       (:rezzed ice))) (:ices server)))))
@@ -2541,9 +2552,9 @@
 
    "Universal Connectivity Fee"
    {:abilities [{:msg (msg "force the Runner to lose " (if (> (:tag runner) 0) "all credits" "1 [Credits]"))
-                 :effect #(if (> (get-in @%1 [:runner :tag]) 0)
-                            (do (lose %1 :runner :credit :all) (trash %1 %2 %3))
-                            (lose %1 :runner :credit 1))}]}
+                 :effect (req (if (> (get-in @state [:runner :tag]) 0)
+                                (do (lose state :runner :credit :all) (trash state side card))
+                                (lose state :runner :credit 1)))}]}
 
    "Uroboros"
    {:abilities [{:label "Trace 4 - Prevent the Runner from making another run"
@@ -2657,8 +2668,8 @@
    "Ghost Runner"
    {:data {:counter 3}
     :abilities [{:counter-cost 1 :msg "gain 1 [Credits]" :req (req (:run @state))
-                 :effect #(do (gain %1 %2 :credit 1)
-                              (when (zero? (:counter %3)) (trash %1 :runner %3)))}]}
+                 :effect (req (gain state side :credit 1)
+                              (when (zero? (:counter card)) (trash state :runner card)))}]}
 
    "Jackson Howard"
    {:abilities [{:cost [:click 1] :effect (effect (draw 2)) :msg "draw 2 cards"}
